@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#103b39"><title>The Giving Board · Organizer</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"><style>/*CSS*/</style></head>
+<body><div class="wrap"><main class="organizer-shell">
+  <header class="organizer-top"><div class="brand"><span class="mark"><span>♥</span></span><span>The Giving Board</span></div><button class="plain" id="logout" hidden>Sign out</button></header>
+  <section class="card side-card organizer-login" id="loginPanel"><div class="mini-label">Private access</div><h1>Organizer sign in</h1><form id="loginForm"><div class="field"><label for="passcode">Organizer passcode</label><input id="passcode" type="password" required autocomplete="current-password"></div><p class="error" id="loginError" hidden></p><button class="btn btn-dark">Open dashboard</button></form></section>
+
+  <div id="dashboard" hidden>
+    <section class="empty-raffle card" id="emptyRaffle" hidden>
+      <span class="empty-raffle-icon" aria-hidden="true">♥</span>
+      <h1>Ready for a new raffle?</h1>
+      <p>Start when you are ready to accept entries.</p>
+      <button class="btn btn-dark" id="startNewRaffle" type="button">Start new raffle</button>
+    </section>
+    <div id="activeRaffle" hidden>
+    <div class="admin-intro"><div><div class="mini-label">Organizer dashboard</div><h1 id="dashboardTitle">The Giving Board</h1></div><div class="admin-top-actions"><button class="btn btn-outline tiny" id="showParticipants" type="button">Participants <span id="peopleCount">0</span></button><button class="btn btn-outline tiny" id="editRaffle" type="button">Edit raffle</button><details class="admin-more" id="moreMenu"><summary class="btn btn-outline tiny" aria-label="More raffle options">More ···</summary><div class="more-menu-items"><button type="button" id="showShare">Share links</button><button type="button" id="showHistory">Past results</button></div></details></div></div>
+
+    <section class="card raffle-stage" aria-label="Raffle overview">
+      <div class="stage-head"><span class="stage-status" id="adminEntryTitle">Entries are closed</span><span class="sync-label" id="boardLiveStatus">● Auto updating</span></div>
+      <div class="stage-hero"><div class="mini-label">Spots chosen</div><div class="stage-count"><strong id="claimedCount">0</strong><span> / <span id="totalCount">30</span></span></div><p id="stageDescription">Open entries when you are ready for signups.</p></div>
+      <div class="progress-track stage-progress"><div class="progress-fill" id="stageProgress"></div></div>
+      <div class="stage-foot"><span id="peopleSummary">No participants yet</span><div class="stage-links"><button class="plain" id="showBoard" type="button">View spot board →</button><button class="plain" id="resetEarly" type="button">Restart board</button></div></div>
+      <div class="stage-actions"><button class="btn btn-dark" id="toggleClosed" type="button">Open entries</button><button class="btn btn-outline" id="draw" type="button" hidden>Start live countdown</button></div>
+      <div id="drawVisual" aria-live="polite"></div><div id="winner"></div><div id="winnerEmail"></div>
+    </section>
+    </div>
+  </div>
+</main></div>
+<div class="site-toast" id="adminToast" role="alert" hidden></div>
+
+<section class="pending-tray" id="pendingTray" aria-label="Pending payment requests" hidden><button class="requests-alert" id="openRequests" type="button"><span class="alert-icon" aria-hidden="true">✦</span><span class="alert-copy"><strong id="pendingAlertTitle">Requests need review</strong><small id="pendingAlertDetail">Tap to review payment details</small></span><span class="alert-arrow" aria-hidden="true">View all →</span></button></section>
+<section class="restart-tray" id="restartTray" aria-label="Restart raffle" hidden><div class="restart-alert"><span class="alert-icon" aria-hidden="true">↻</span><span class="alert-copy"><strong id="restartTitle">Raffle complete. Ready for the next one?</strong><small>The result will be archived and this board will be cleared.</small></span><button class="btn btn-light" id="resetRaffle" type="button">Restart board</button></div><div class="restart-tray-confirm" id="resetConfirm" hidden><strong>Clear current spots and requests?</strong><span>A snapshot will be archived. The new board will stay closed until you open entries.</span><div><button class="btn btn-outline tiny" id="cancelReset" type="button">Cancel</button><button class="btn btn-danger tiny" id="confirmReset" type="button">Archive and restart</button></div></div></section>
+
+<dialog class="requests-dialog" id="requestsDialog"><div class="modal-head"><div><div class="mini-label">Payment review</div><h2>Requests <span id="requestCount">0</span></h2></div><button class="close" type="button" data-close="requestsDialog" aria-label="Close">×</button></div><div class="modal-body"><p>Find each payment by its Venmo username or PayPal email before approving spots.</p><div id="requests"></div></div></dialog>
+
+<dialog class="edit-dialog" id="settingsDialog"><div class="modal-head"><div><div class="mini-label">Raffle setup</div><h2>Edit raffle</h2></div><button class="close" type="button" data-close="settingsDialog" aria-label="Close">×</button></div><div class="modal-body"><p>Price changes apply to new requests. Keep enough spots for people already approved.</p><form id="settingsForm">
+  <div class="cols"><div class="field"><label for="title">Raffle title</label><input id="title" required maxlength="70"></div><div class="field"><label for="prize">Prize</label><input id="prize" required maxlength="120"></div></div>
+  <div class="cols"><div class="field"><label for="total">Number of openings</label><input id="total" type="number" min="1" max="200" required></div><div class="field"><label for="price">Cost per spot ($)</label><input id="price" type="number" min="1" max="1000" required></div></div>
+  <div class="cols"><div class="field"><label for="max">Maximum per person</label><input id="max" type="number" min="1" max="10" required></div><div class="field"><label for="drawingDate">Drawing date (optional)</label><input id="drawingDate" maxlength="40" placeholder="For example, December 1"></div></div>
+  <div class="field"><label for="charities">Charities</label><input id="charities" required maxlength="120"></div>
+  <div class="cols"><div class="field"><label for="venmoUrl">Venmo payment link</label><input id="venmoUrl" type="url" required></div><div class="field"><label for="paypalUrl">PayPal payment link</label><input id="paypalUrl" type="url" required></div></div>
+  <div class="field"><label for="organizerEmail">Approval email sender</label><input id="organizerEmail" type="email" required></div><div class="field"><label for="instructions">How to pay the organizer</label><input id="instructions" required maxlength="250" placeholder="Venmo @... or PayPal link"></div>
+  <p class="error" id="settingsError" hidden></p><div id="settingsSuccess" class="success" hidden>Settings saved.</div><button class="btn btn-dark" type="submit">Save changes</button>
+</form></div></dialog>
+
+<dialog class="board-dialog" id="boardDialog"><div class="modal-head"><div><div class="mini-label">Live spot board</div><h2 id="boardCountText">0 of 30 spots chosen</h2></div><button class="close" type="button" data-close="boardDialog" aria-label="Close">×</button></div><div class="modal-body"><div class="board admin-board" id="adminBoard" aria-label="Raffle spot board"></div><div class="legend"><span><i></i> Available</span><span><i class="filled"></i> Claimed</span><span><i class="won"></i> Winner</span></div><div class="notice" id="spotDetails">Select a number to see its details.</div></div></dialog>
+
+<dialog class="side-drawer" id="participantsDialog"><div class="modal-head"><div><div class="mini-label">People</div><h2>Participants <span id="participantCount">0</span></h2></div><button class="close" type="button" data-close="participantsDialog" aria-label="Close">×</button></div><div class="modal-body" id="participantList"></div></dialog>
+
+<dialog id="shareDialog"><div class="modal-head"><div><div class="mini-label">Quick links</div><h2>Share the raffle</h2></div><button class="close" type="button" data-close="shareDialog" aria-label="Close">×</button></div><div class="modal-body"><div class="share-row"><div><strong>Participant page</strong><a id="participantLink" href="/">Participant link</a></div><button class="btn btn-outline tiny" type="button" data-copy-link="participant">Copy</button></div><div class="share-row"><div><strong>Organizer dashboard</strong><a id="organizerLink" href="/organizer">Organizer link</a></div><button class="btn btn-outline tiny" type="button" data-copy-link="organizer">Copy</button></div></div></dialog>
+
+<dialog id="historyDialog"><div class="modal-head"><div><div class="mini-label">Archive</div><h2>Past results</h2></div><button class="close" type="button" data-close="historyDialog" aria-label="Close">×</button></div><div class="modal-body raffle-history" id="history"></div></dialog>
+
+<dialog id="codeDialog"><div class="modal-head"><div><div class="mini-label">Approval sent</div><h2 id="codeDialogTitle">Send their access</h2></div><button class="close" type="button" data-close="codeDialog" aria-label="Close">×</button></div><div class="modal-body" id="codeDialogBody"></div></dialog>
+<script>/*ADMIN_JS*/</script></body></html>

@@ -1,0 +1,13 @@
+{
+  "name": "the-giving-board-local",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-11-18",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "giving-board-local",
+      "database_id": "00000000-0000-4000-8000-000000000001",
+      "migrations_dir": "drizzle"
+    }
+  ]
+}
