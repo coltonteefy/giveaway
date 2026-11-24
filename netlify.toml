@@ -7,8 +7,13 @@
   node_bundler = "esbuild"
 
 [[redirects]]
+  from = "/"
+  to = "/user.html"
+  status = 200
+
+[[redirects]]
   from = "/r/angie"
-  to = "/index.html"
+  to = "/user.html"
   status = 200
 
 [[redirects]]
