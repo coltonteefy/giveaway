@@ -5,7 +5,8 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "validate": "node scripts/validate-artifact.mjs",
-    "seed:firestore": "node scripts/seed-firestore.mjs"
+    "seed:firestore": "node scripts/seed-firestore.mjs",
+    "create:organizer": "node scripts/create-organizer-account.mjs"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0"

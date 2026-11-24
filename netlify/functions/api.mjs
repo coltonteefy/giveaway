@@ -1,6 +1,7 @@
 import {webcrypto as crypto} from 'node:crypto';
 import {initializeApp,getApps,cert} from 'firebase-admin/app';
 import {getFirestore} from 'firebase-admin/firestore';
+import {getAuth} from 'firebase-admin/auth';
 
 function db(){
   if(!getApps().length){
@@ -83,7 +84,10 @@ export default async (request,context)=>{
     }
     if(method==='POST'&&route==='/api/logout'){return json({ok:true},200,{'set-cookie':'entry=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'})}
     if(method==='POST'&&route==='/api/admin/login'){
-      let b=await body(request);if(!env.ORGANIZER_PASSCODE||!env.ANGIE_ORGANIZER_PASSCODE||!env.SESSION_SECRET)return fail('Organizer access is not configured.',503);let candidate=await hash(clean(b.passcode,200)),id=candidate===await hash(env.ORGANIZER_PASSCODE)?'1':candidate===await hash(env.ANGIE_ORGANIZER_PASSCODE)?'2':null;if(!id)return fail('Incorrect passcode.',401);return json({ok:true},200,{'set-cookie':await newCookie(id,'admin',env.SESSION_SECRET,request)})
+      let b=await body(request);if(!env.SESSION_SECRET)return fail('Organizer access is not configured.',503);
+      let decoded;try{decoded=await getAuth().verifyIdToken(clean(b.idToken,4000))}catch{return fail('Incorrect email or password.',401)}
+      let email=(decoded.email||'').toLowerCase(),id=email&&email===(env.ORGANIZER_EMAIL_1||'').toLowerCase()?'1':email&&email===(env.ORGANIZER_EMAIL_2||'').toLowerCase()?'2':null;
+      if(!id)return fail('This account is not an organizer for any raffle.',403);return json({ok:true},200,{'set-cookie':await newCookie(id,'admin',env.SESSION_SECRET,request)})
     }
     if(method==='POST'&&route==='/api/admin/logout')return json({ok:true},200,{'set-cookie':'admin=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'});
     if(!route.startsWith('/api/admin/'))return fail('Not found.',404);

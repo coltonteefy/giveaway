@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#103b39"><title>The Giving Board · Organizer</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="/style.css"></head>
 <body><div class="wrap"><main class="organizer-shell">
   <header class="organizer-top"><div class="brand"><span class="mark"><span>♥</span></span><span>The Giving Board</span></div><button class="plain" id="logout" hidden>Sign out</button></header>
-  <section class="card side-card organizer-login" id="loginPanel"><div class="mini-label">Private access</div><h1>Organizer sign in</h1><form id="loginForm"><div class="field"><label for="passcode">Organizer passcode</label><input id="passcode" type="password" required autocomplete="current-password"></div><p class="error" id="loginError" hidden></p><button class="btn btn-dark">Open dashboard</button></form></section>
+  <section class="card side-card organizer-login" id="loginPanel"><div class="mini-label">Private access</div><h1>Organizer sign in</h1><form id="loginForm"><div class="field"><label for="orgEmail">Email</label><input id="orgEmail" type="email" required autocomplete="username"></div><div class="field"><label for="orgPassword">Password</label><input id="orgPassword" type="password" required autocomplete="current-password"></div><p class="error" id="loginError" hidden></p><button class="btn btn-dark">Open dashboard</button></form></section>
 
   <div id="dashboard" hidden>
     <section class="empty-raffle card" id="emptyRaffle" hidden>
@@ -51,4 +51,4 @@
 <dialog id="historyDialog"><div class="modal-head"><div><div class="mini-label">Archive</div><h2>Past results</h2></div><button class="close" type="button" data-close="historyDialog" aria-label="Close">×</button></div><div class="modal-body raffle-history" id="history"></div></dialog>
 
 <dialog id="codeDialog"><div class="modal-head"><div><div class="mini-label">Approval sent</div><h2 id="codeDialogTitle">Send their access</h2></div><button class="close" type="button" data-close="codeDialog" aria-label="Close">×</button></div><div class="modal-body" id="codeDialogBody"></div></dialog>
-<script src="/admin.js" defer></script></body></html>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script><script src="/admin.js" defer></script></body></html>
