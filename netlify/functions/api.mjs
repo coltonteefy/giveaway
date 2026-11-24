@@ -19,7 +19,7 @@ const cookies=req=>Object.fromEntries((req.headers.get('cookie')||'').split(';')
 const hex=arr=>[...new Uint8Array(arr)].map(x=>x.toString(16).padStart(2,'0')).join('');
 async function hash(value){return hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))}
 async function sign(value,secret){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return hex(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(value)))}
-async function validCookie(raw,purpose,secret){if(!raw||!secret)return null;let parts=raw.split('.');if(parts.length!==3)return null;let [id,exp,signature]=parts;if(!/^\d+$/.test(exp)||Number(exp)<Date.now())return null;let expected=await sign(`${purpose}.${id}.${exp}`,secret);return signature===expected?id:null}
+async function validCookie(raw,purpose,secret){if(!raw||!secret)return null;let parts=raw.split('.');if(parts.length<3)return null;let signature=parts.pop(),exp=parts.pop(),id=parts.join('.');if(!/^\d+$/.test(exp)||Number(exp)<Date.now())return null;let expected=await sign(`${purpose}.${id}.${exp}`,secret);return signature===expected?id:null}
 async function newCookie(id,purpose,secret,request){let exp=Date.now()+7*86400000,value=`${id}.${exp}.${await sign(`${purpose}.${id}.${exp}`,secret)}`;let secure=new URL(request.url).protocol==='https:'?'; Secure':'';return `${purpose}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800${secure}`}
 const participantPath=raffle=>raffle.slug==='angie'?'/r/angie':'/';
 const used=raffle=>Object.keys(raffle.board||{}).map(Number);
