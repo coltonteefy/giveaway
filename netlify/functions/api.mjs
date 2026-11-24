@@ -70,15 +70,17 @@ export default async (request,context)=>{
       if(raffle.closed)return fail('This raffle is closed.');let b=await body(request),name=clean(b.name,60),email=clean(b.email,120).toLowerCase(),tag=clean(b.tag,120),requested=Number(b.requested),payment=clean(b.method,15);
       let tagValid=payment==='Venmo'?/^@?[a-zA-Z0-9._-]{2,50}$/.test(tag):payment==='PayPal'&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tag);
       if(!name||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!tagValid||!Number.isInteger(requested)||requested<1||requested>raffle.max_per_person||!['Venmo','PayPal'].includes(payment)||b.paid!==true)return fail('Check your name, email, payment identifier, amount, and payment confirmation.');
-      let existing=await requestsCol.where('email','==',email).where('status','!=','declined').limit(1).get();if(!existing.empty)return fail('This email already has an entry. Contact the organizer if you need help.',409);
+      // Query only by email so participant flows need no composite Firestore indexes.
+      // Do not limit before filtering: earlier declined requests may precede an active one.
+      let existing=await requestsCol.where('email','==',email).get();if(existing.docs.some(doc=>doc.data().status!=='declined'))return fail('This email already has an entry. Contact the organizer if you need help.',409);
       await requestsCol.doc(randomId()).set({name,email,method:payment,tag,requested,amount:requested*raffle.price,approved:0,status:'pending',code_hash:null,code_expires:null,failed_attempts:0,created_at:new Date().toISOString()});
       return json({ok:true,status:'pending'},201)
     }
     if(method==='POST'&&route==='/api/verify'){
       let b=await body(request),email=clean(b.email,120).toLowerCase(),code=clean(b.code,6);if(!/^[0-9]{6}$/.test(code))return fail('Enter the six-digit code.');
-      let snap=await requestsCol.where('email','==',email).where('status','==','approved').orderBy('created_at','desc').limit(1).get();
-      if(snap.empty)return fail('Code not found or expired. Ask the organizer to resend it.',401);
-      let r={id:snap.docs[0].id,...snap.docs[0].data()};
+      let snap=await requestsCol.where('email','==',email).get();
+      let r=snap.docs.map(doc=>({id:doc.id,...doc.data()})).filter(entry=>entry.status==='approved').sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))[0];
+      if(!r)return fail('Code not found or expired. Ask the organizer to resend it.',401);
       if(!r.code_hash||!r.code_expires||r.code_expires<Date.now()||r.failed_attempts>=5)return fail('Code not found or expired. Ask the organizer to resend it.',401);
       if(await hash(`${r.id}.${code}.${env.SESSION_SECRET}`)!==r.code_hash){await requestsCol.doc(r.id).update({failed_attempts:(r.failed_attempts||0)+1});return fail('Code not found or expired. Ask the organizer to resend it.',401)}
       await requestsCol.doc(r.id).update({code_hash:null,code_expires:null,failed_attempts:0});return json({ok:true},200,{'set-cookie':await newCookie(r.id,'entry',env.SESSION_SECRET,request)})
