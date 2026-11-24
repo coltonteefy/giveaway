@@ -1,0 +1,22 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+  command = "echo 'static site, no build step'"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/r/angie"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/organizer"
+  to = "/organizer.html"
+  status = 200
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
