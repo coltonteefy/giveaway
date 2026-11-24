@@ -1,6 +1,6 @@
 import {webcrypto as crypto} from 'node:crypto';
 import {initializeApp,getApps,cert} from 'firebase-admin/app';
-import {getFirestore} from 'firebase-admin/firestore';
+import {getFirestore,FieldValue} from 'firebase-admin/firestore';
 import {getAuth} from 'firebase-admin/auth';
 
 function db(){
@@ -31,7 +31,10 @@ async function revealIfReady(d,raffle){
   return getRaffle(d,raffle.id);
 }
 const clean=(value,n=100)=>String(value??'').trim().slice(0,n);
-const adminId=async(req,env)=>await validCookie(cookies(req).admin,'admin',env.SESSION_SECRET);
+const adminSession=async(req,env)=>{let raw=await validCookie(cookies(req).admin,'admin',env.SESSION_SECRET);if(!raw)return null;let i=raw.indexOf(':');if(i<0)return null;return {raffleId:raw.slice(0,i),email:raw.slice(i+1)}};
+async function getAdminDoc(d,email){let snap=await d.collection('givingboard_admins').doc(email).get();return snap.exists?snap.data():null}
+async function allRaffleIds(d){let docs=await d.collection('givingboard_raffles').listDocuments();return docs.map(ref=>ref.id)}
+async function accessibleRaffleIds(d,adminDoc){if(!adminDoc)return [];if(adminDoc.role==='super')return allRaffleIds(d);return Array.isArray(adminDoc.raffleIds)?adminDoc.raffleIds.map(String):[]}
 async function participant(req,env,d,raffleId){let id=await validCookie(cookies(req).entry,'entry',env.SESSION_SECRET);if(!id)return null;let snap=await d.collection('givingboard_raffles').doc(String(raffleId)).collection('givingboard_requests').doc(id).get();return snap.exists?{id:snap.id,...snap.data()}:null}
 async function body(req){if(!req.headers.get('content-type')?.includes('application/json'))throw Error('Send JSON.');return req.json()}
 const randomId=()=>crypto.randomUUID();
@@ -47,9 +50,14 @@ export default async (request,context)=>{
   try{
     const url=new URL(request.url),method=request.method;
     let path=url.pathname.replace(/^\/\.netlify\/functions\/api/,'')||'/';
-    let route='/api'+path,raffleId=1,d=db();
+    let route='/api'+path,raffleId=1,d=db(),adminEmail=null,adminDoc=null;
     if(route.startsWith('/api/r/')){if(!route.startsWith('/api/r/angie/'))return fail('Not found.',404);route='/api/'+route.slice('/api/r/angie/'.length);raffleId=2}
-    if(route.startsWith('/api/admin/')&&route!=='/api/admin/login'&&route!=='/api/admin/logout'){let admin=await adminId(request,env);if(!['1','2'].includes(admin))return fail('Organizer sign in required.',401);raffleId=Number(admin)}
+    if(route.startsWith('/api/admin/')&&route!=='/api/admin/login'&&route!=='/api/admin/logout'){
+      let session=await adminSession(request,env);if(!session)return fail('Organizer sign in required.',401);
+      adminEmail=session.email;adminDoc=await getAdminDoc(d,adminEmail);if(!adminDoc)return fail('Organizer sign in required.',401);
+      let accessible=await accessibleRaffleIds(d,adminDoc);if(!accessible.includes(session.raffleId))return fail('Organizer sign in required.',401);
+      raffleId=Number(session.raffleId)
+    }
     if(method==='POST'&&request.headers.get('origin')&&request.headers.get('origin')!==url.origin)return fail('Invalid origin.',403);
     let raffle=await getRaffle(d,raffleId);if(!raffle)return fail('Raffle unavailable.',503);raffle=await revealIfReady(d,raffle);
     const raffleRef=d.collection('givingboard_raffles').doc(String(raffleId)),requestsCol=raffleRef.collection('givingboard_requests');
@@ -86,11 +94,48 @@ export default async (request,context)=>{
     if(method==='POST'&&route==='/api/admin/login'){
       let b=await body(request);if(!env.SESSION_SECRET)return fail('Organizer access is not configured.',503);
       let decoded;try{decoded=await getAuth().verifyIdToken(clean(b.idToken,4000))}catch{return fail('Incorrect email or password.',401)}
-      let email=(decoded.email||'').toLowerCase(),id=email&&email===(env.ORGANIZER_EMAIL_1||'').toLowerCase()?'1':email&&email===(env.ORGANIZER_EMAIL_2||'').toLowerCase()?'2':null;
-      if(!id)return fail('This account is not an organizer for any raffle.',403);return json({ok:true},200,{'set-cookie':await newCookie(id,'admin',env.SESSION_SECRET,request)})
+      let email=(decoded.email||'').toLowerCase(),doc=await getAdminDoc(d,email);if(!doc)return fail('This account is not an organizer for any raffle.',403);
+      let accessible=await accessibleRaffleIds(d,doc);if(!accessible.length)return fail('This account is not an organizer for any raffle.',403);
+      let requested=clean(b.raffleId,10),target=accessible.includes(requested)?requested:accessible[0];
+      return json({ok:true},200,{'set-cookie':await newCookie(`${target}:${email}`,'admin',env.SESSION_SECRET,request)})
     }
     if(method==='POST'&&route==='/api/admin/logout')return json({ok:true},200,{'set-cookie':'admin=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'});
     if(!route.startsWith('/api/admin/'))return fail('Not found.',404);
+    if(method==='GET'&&route==='/api/admin/me'){
+      let accessible=await accessibleRaffleIds(d,adminDoc),raffles=[];
+      for(let id of accessible){let r=await getRaffle(d,id);if(r)raffles.push({id:r.id,title:r.title})}
+      return json({email:adminEmail,role:adminDoc.role,currentRaffleId:String(raffleId),raffles})
+    }
+    if(method==='POST'&&route==='/api/admin/switch-raffle'){
+      let b=await body(request),accessible=await accessibleRaffleIds(d,adminDoc),target=clean(b.raffleId,10);
+      if(!accessible.includes(target))return fail('You do not have access to that raffle.',403);
+      return json({ok:true},200,{'set-cookie':await newCookie(`${target}:${adminEmail}`,'admin',env.SESSION_SECRET,request)})
+    }
+    if(route.startsWith('/api/admin/organizers')&&adminDoc.role!=='super')return fail('Only the primary organizer can manage admins.',403);
+    if(method==='GET'&&route==='/api/admin/organizers'){
+      let snap=await d.collection('givingboard_admins').get();
+      let list=snap.docs.map(doc=>({email:doc.id,role:doc.data().role,raffleIds:doc.data().raffleIds||[]}));
+      return json({admins:list})
+    }
+    if(method==='POST'&&route==='/api/admin/organizers/add'){
+      let b=await body(request),email=clean(b.email,120).toLowerCase(),targetRaffle=clean(b.raffleId,10);
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return fail('Enter a valid email address.');
+      if(!(await getRaffle(d,targetRaffle)))return fail('Choose a valid raffle.');
+      let ref=d.collection('givingboard_admins').doc(email),existing=await ref.get();
+      if(existing.exists&&existing.data().role==='super')return fail('That account already has full access.');
+      await ref.set({role:'organizer',raffleIds:FieldValue.arrayUnion(targetRaffle),createdAt:new Date().toISOString(),createdBy:adminEmail},{merge:true});
+      let tempPassword=null;
+      try{await getAuth().getUserByEmail(email)}catch{tempPassword=crypto.randomUUID().replace(/-/g,'').slice(0,12);await getAuth().createUser({email,password:tempPassword,emailVerified:true})}
+      return json({ok:true,tempPassword})
+    }
+    if(method==='POST'&&route==='/api/admin/organizers/remove'){
+      let b=await body(request),email=clean(b.email,120).toLowerCase();
+      if(email===adminEmail)return fail('You cannot remove your own access.');
+      let ref=d.collection('givingboard_admins').doc(email),existing=await ref.get();
+      if(!existing.exists)return fail('That account is not an organizer.');
+      if(existing.data().role==='super')return fail('That account cannot be removed.');
+      await ref.delete();return json({ok:true})
+    }
     if(method==='GET'&&route==='/api/admin/state'){
       let snap=await requestsCol.orderBy('created_at','desc').get(),board=raffle.board||{};
       let rows=snap.docs.map(doc=>{let r={id:doc.id,...doc.data()};return {id:r.id,name:r.name,email:r.email,method:r.method,tag:r.tag,requested:r.requested,amount:r.amount,approved:r.approved,status:r.status,created_at:r.created_at,code_expires:r.code_expires,spots:Object.keys(board).filter(n=>board[n]===r.id).map(Number)}});
