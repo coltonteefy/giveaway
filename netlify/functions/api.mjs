@@ -49,8 +49,12 @@ export default async (request,context)=>{
   const env=process.env;
   try{
     const url=new URL(request.url),method=request.method;
-    let path=url.pathname.replace(/^\/\.netlify\/functions\/api/,'')||'/';
-    let route='/api'+path,raffleId=1,d=db(),adminEmail=null,adminDoc=null;
+    // In production, Netlify's /api/* redirect invokes this function but request.url still
+    // reflects the original requested path (e.g. "/api/config"), not the rewritten
+    // "/.netlify/functions/api/config" destination. Support both so direct function calls
+    // (used for local testing) and the normal redirected calls both resolve correctly.
+    let route=url.pathname.startsWith('/.netlify/functions/api')?'/api'+url.pathname.slice('/.netlify/functions/api'.length)||'/api/':url.pathname;
+    let raffleId=1,d=db(),adminEmail=null,adminDoc=null;
     if(route.startsWith('/api/r/')){if(!route.startsWith('/api/r/angie/'))return fail('Not found.',404);route='/api/'+route.slice('/api/r/angie/'.length);raffleId=2}
     if(route.startsWith('/api/admin/')&&route!=='/api/admin/login'&&route!=='/api/admin/logout'){
       let session=await adminSession(request,env);if(!session)return fail('Organizer sign in required.',401);
