@@ -1,6 +1,0 @@
-ORGANIZER_PASSCODE=replace-with-your-own-admin-passcode
-ANGIE_ORGANIZER_PASSCODE=replace-with-angies-test-passcode
-SESSION_SECRET=replace-with-a-long-random-secret
-# Optional. Without these, approvals provide a code and formatted email to send manually.
-# BREVO_API_KEY=
-# BREVO_SENDER_EMAIL=

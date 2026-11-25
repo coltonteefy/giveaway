@@ -3,8 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bash scripts/build.sh",
-    "validate": "node scripts/validate-artifact.mjs",
     "seed:firestore": "node scripts/seed-firestore.mjs",
     "seed:super-admin": "node scripts/seed-super-admin.mjs",
     "add:organizer": "node scripts/add-organizer.mjs"
