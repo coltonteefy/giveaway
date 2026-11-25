@@ -21,7 +21,6 @@ async function hash(value){return hex(await crypto.subtle.digest('SHA-256',new T
 async function sign(value,secret){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return hex(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(value)))}
 async function validCookie(raw,purpose,secret){if(!raw||!secret)return null;let parts=raw.split('.');if(parts.length<3)return null;let signature=parts.pop(),exp=parts.pop(),id=parts.join('.');if(!/^\d+$/.test(exp)||Number(exp)<Date.now())return null;let expected=await sign(`${purpose}.${id}.${exp}`,secret);return signature===expected?id:null}
 async function newCookie(id,purpose,secret,request){let exp=Date.now()+7*86400000,value=`${id}.${exp}.${await sign(`${purpose}.${id}.${exp}`,secret)}`;let secure=new URL(request.url).protocol==='https:'?'; Secure':'';return `${purpose}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800${secure}`}
-const participantPath=raffle=>raffle.slug==='angie'?'/r/angie':'/';
 const used=raffle=>Object.keys(raffle.board||{}).map(Number);
 const settings=r=>({slug:r.slug,title:r.title,total:r.spots_total,price:r.price,max:r.max_per_person,charities:r.charities,prize:r.prize,instructions:r.payment_instructions,drawingDate:r.drawing_date,venmoUrl:r.venmo_url,paypalUrl:r.paypal_url,organizerEmail:r.organizer_email,closed:!!r.closed,winner:r.winner??null,claimed:used(r).length,drawAt:r.winner?null:r.draw_reveal_at??null,drawStartedAt:r.winner?null:r.draw_started_at??null,serverNow:Date.now()});
 async function getRaffle(d,id){let snap=await d.collection('givingboard_raffles').doc(String(id)).get();return snap.exists?{id:snap.id,...snap.data()}:null}
@@ -35,7 +34,6 @@ const adminSession=async(req,env)=>{let raw=await validCookie(cookies(req).admin
 async function getAdminDoc(d,email){let snap=await d.collection('givingboard_admins').doc(email).get();return snap.exists?snap.data():null}
 async function allRaffleIds(d){let docs=await d.collection('givingboard_raffles').listDocuments();return docs.map(ref=>ref.id)}
 async function accessibleRaffleIds(d,adminDoc){if(!adminDoc)return [];if(adminDoc.role==='super')return allRaffleIds(d);return Array.isArray(adminDoc.raffleIds)?adminDoc.raffleIds.map(String):[]}
-async function participant(req,env,d,raffleId){let id=await validCookie(cookies(req).entry,'entry',env.SESSION_SECRET);if(!id)return null;let snap=await d.collection('givingboard_raffles').doc(String(raffleId)).collection('givingboard_requests').doc(id).get();return snap.exists?{id:snap.id,...snap.data()}:null}
 // Personal board links: token = "<raffleId>.<requestId>.<48 hex chars>". Only a SHA-256 hash of the
 // whole token is stored on the request, so a database read alone cannot open a board.
 const boardTokenPattern=/^([12])\.([0-9a-f-]{20,64})\.([0-9a-f]{48})$/;
@@ -43,11 +41,14 @@ const newBoardToken=(raffleId,requestId)=>`${raffleId}.${requestId}.${hex(crypto
 async function boardRef(d,token){let m=boardTokenPattern.exec(token||'');if(!m)return null;let snap=await d.collection('givingboard_raffles').doc(m[1]).collection('givingboard_requests').doc(m[2]).get();if(!snap.exists)return null;let data=snap.data();if(!data.board_token_hash||data.board_token_hash!==await hash(token))return null;return {raffleId:m[1],request:{id:snap.id,...data}}}
 async function body(req){if(!req.headers.get('content-type')?.includes('application/json'))throw Error('Send JSON.');return req.json()}
 const randomId=()=>crypto.randomUUID();
-const randomCode=()=>{let a=new Uint32Array(1);crypto.getRandomValues(a);return String(a[0]%1000000).padStart(6,'0')};
-async function deliverCode(env,r,code,token,origin,raffle){
+// The personal link is stored encrypted (AES-GCM, key derived from SESSION_SECRET) so the organizer can copy it again later.
+async function linkKey(env){let raw=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`board-link|${env.SESSION_SECRET}`));return crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt','decrypt'])}
+async function sealToken(env,token){let iv=crypto.getRandomValues(new Uint8Array(12));let ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await linkKey(env),new TextEncoder().encode(token)));return `${hex(iv)}:${hex(ct)}`}
+async function openToken(env,sealed){let [ivh,cth]=String(sealed).split(':');let iv=Uint8Array.from(ivh.match(/../g),h=>parseInt(h,16)),ct=Uint8Array.from(cth.match(/../g),h=>parseInt(h,16));return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv},await linkKey(env),ct))}
+async function deliverLink(env,r,token,origin){
   if(!env.BREVO_API_KEY||!env.BREVO_SENDER_EMAIL)return 'manual';
   let link=`${origin}/b/${token}`;
-  try{let res=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'content-type':'application/json','api-key':env.BREVO_API_KEY},body:JSON.stringify({sender:{email:env.BREVO_SENDER_EMAIL,name:'The Giving Board'},to:[{email:r.email,name:r.name}],subject:'Your raffle spots are ready',htmlContent:`<div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;color:#17332f"><div style="background:#103b39;color:#d8f26b;padding:24px;font-weight:bold;font-size:20px">♥ The Giving Board</div><div style="padding:30px"><h1>Your spots are ready.</h1><p>Hi ${r.name.replace(/[&<>"']/g,'')}, your payment was approved for <b>${r.approved} raffle spot${r.approved===1?'':'s'}</b>.</p><p><a href="${link.replace(/&/g,'&amp;')}" style="display:inline-block;background:#103b39;color:white;padding:15px 24px;text-decoration:none;border-radius:9px">Choose my numbers</a></p><p>This is your personal board link. Keep it private: anyone with it can open your board.</p><p>If it does not open, visit ${origin}${participantPath(raffle)} and enter your email with backup code <b>${code}</b>.</p></div></div>`})});return res.ok?'sent':'manual'}catch{return 'manual'}
+  try{let res=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'content-type':'application/json','api-key':env.BREVO_API_KEY},body:JSON.stringify({sender:{email:env.BREVO_SENDER_EMAIL,name:'The Giving Board'},to:[{email:r.email,name:r.name}],subject:'Your raffle spots are ready',htmlContent:`<div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;color:#17332f"><div style="background:#103b39;color:#d8f26b;padding:24px;font-weight:bold;font-size:20px">♥ The Giving Board</div><div style="padding:30px"><h1>Your spots are ready.</h1><p>Hi ${r.name.replace(/[&<>"']/g,'')}, your payment was approved for <b>${r.approved} raffle spot${r.approved===1?'':'s'}</b>.</p><p><a href="${link.replace(/&/g,'&amp;')}" style="display:inline-block;background:#103b39;color:white;padding:15px 24px;text-decoration:none;border-radius:9px">Choose my numbers</a></p><p>This is your personal board link. Keep it private: anyone with it can open your board.</p></div></div>`})});return res.ok?'sent':'manual'}catch{return 'manual'}
 }
 
 export default async (request,context)=>{
@@ -84,27 +85,17 @@ export default async (request,context)=>{
       await requestsCol.doc(randomId()).set({name,email,method:payment,tag,requested,amount:requested*raffle.price,approved:0,status:'pending',code_hash:null,code_expires:null,failed_attempts:0,created_at:new Date().toISOString()});
       return json({ok:true,status:'pending'},201)
     }
-    if(method==='POST'&&route==='/api/verify'){
-      let b=await body(request),email=clean(b.email,120).toLowerCase(),code=clean(b.code,6);if(!/^[0-9]{6}$/.test(code))return fail('Enter the six-digit code.');
-      let snap=await requestsCol.where('email','==',email).get();
-      let r=snap.docs.map(doc=>({id:doc.id,...doc.data()})).filter(entry=>entry.status==='approved').sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))[0];
-      if(!r)return fail('Code not found or expired. Ask the organizer to resend it.',401);
-      if(!r.code_hash||!r.code_expires||r.code_expires<Date.now()||r.failed_attempts>=5)return fail('Code not found or expired. Ask the organizer to resend it.',401);
-      if(await hash(`${r.id}.${code}.${env.SESSION_SECRET}`)!==r.code_hash){await requestsCol.doc(r.id).update({failed_attempts:(r.failed_attempts||0)+1});return fail('Code not found or expired. Ask the organizer to resend it.',401)}
-      await requestsCol.doc(r.id).update({code_hash:null,code_expires:null,failed_attempts:0});return json({ok:true},200,{'set-cookie':await newCookie(r.id,'entry',env.SESSION_SECRET,request)})
-    }
     if(method==='GET'&&route==='/api/me'){
-      let r=boardReq||await participant(request,env,d,raffleId);if(!r)return fail('Sign in with your emailed code.',401);let board=raffle.board||{};let mine=Object.keys(board).filter(n=>board[n]===r.id).map(Number);return json({name:r.name,status:r.status,approved:r.approved,requested:r.requested,spots:mine,used:used(raffle),...settings(raffle)})
+      let r=boardReq;if(!r)return fail('Sign in with your emailed code.',401);let board=raffle.board||{};let mine=Object.keys(board).filter(n=>board[n]===r.id).map(Number);return json({name:r.name,status:r.status,approved:r.approved,requested:r.requested,spots:mine,used:used(raffle),...settings(raffle)})
     }
     if(method==='POST'&&route==='/api/claim'){
-      let r=boardReq||await participant(request,env,d,raffleId);if(!r||r.status!=='approved')return fail('Your entry is not approved.',403);let b=await body(request),numbers=b.numbers;if(!Array.isArray(numbers)||numbers.length!==r.approved||new Set(numbers).size!==numbers.length||numbers.some(n=>!Number.isInteger(n)||n<1||n>raffle.spots_total))return fail(`Choose exactly ${r.approved} valid spots.`);
+      let r=boardReq;if(!r||r.status!=='approved')return fail('Your entry is not approved.',403);let b=await body(request),numbers=b.numbers;if(!Array.isArray(numbers)||numbers.length!==r.approved||new Set(numbers).size!==numbers.length||numbers.some(n=>!Number.isInteger(n)||n<1||n>raffle.spots_total))return fail(`Choose exactly ${r.approved} valid spots.`);
       let outcome=await d.runTransaction(async tx=>{
         let snap=await tx.get(raffleRef),cur=snap.data();if(cur.closed||cur.winner)return {error:'The board is closed.',status:400};let board=cur.board||{};if(Object.values(board).includes(r.id))return {error:'You have already chosen your spots.',status:409};if(numbers.some(n=>board[n]))return {error:'One of those spots was just claimed. Choose again.',status:409};
         for(let n of numbers)board[n]=r.id;tx.update(raffleRef,{board,version:cur.version+1});return {ok:true}
       });
       if(outcome.error)return fail(outcome.error,outcome.status);return json({ok:true,spots:numbers})
     }
-    if(method==='POST'&&route==='/api/logout'){return json({ok:true},200,{'set-cookie':'entry=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'})}
     if(method==='POST'&&route==='/api/admin/login'){
       let b=await body(request);if(!env.SESSION_SECRET)return fail('Organizer access is not configured.',503);
       let decoded;try{decoded=await getAuth().verifyIdToken(clean(b.idToken,4000))}catch{return fail('Incorrect email or password.',401)}
@@ -152,7 +143,7 @@ export default async (request,context)=>{
     }
     if(method==='GET'&&route==='/api/admin/state'){
       let snap=await requestsCol.orderBy('created_at','desc').get(),board=raffle.board||{};
-      let rows=snap.docs.map(doc=>{let r={id:doc.id,...doc.data()};return {id:r.id,name:r.name,email:r.email,method:r.method,tag:r.tag,requested:r.requested,amount:r.amount,approved:r.approved,status:r.status,created_at:r.created_at,code_expires:r.code_expires,spots:Object.keys(board).filter(n=>board[n]===r.id).map(Number)}});
+      let rows=snap.docs.map(doc=>{let r={id:doc.id,...doc.data()};return {id:r.id,name:r.name,email:r.email,method:r.method,tag:r.tag,requested:r.requested,amount:r.amount,approved:r.approved,status:r.status,created_at:r.created_at,has_link:!!r.board_token_enc,spots:Object.keys(board).filter(n=>board[n]===r.id).map(Number)}});
       let archSnap=await raffleRef.collection('givingboard_history').orderBy('drawn_at','desc').limit(5).get();
       let history=archSnap.docs.map(doc=>{let h=doc.data(),prior=h.snapshot.settings;return {slug:raffle.slug,title:h.title,winner:h.winner,winner_name:h.winner_name,winner_email:h.winner_email,drawn_at:h.drawn_at,outcome:h.outcome,prize:prior.prize,charities:prior.charities}});
       return json({settings:settings(raffle),history,requests:rows})
@@ -169,10 +160,15 @@ export default async (request,context)=>{
     if(method==='POST'&&route==='/api/admin/approve'){
       let b=await body(request),count=Number(b.count),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('This request cannot be approved.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='pending'||raffle.closed)return fail('This request cannot be approved.');if(!Number.isInteger(count)||count<1||count>r.requested)return fail('Choose a number within this request.');
       let approvedSnap=await requestsCol.where('status','==','approved').get();let commitments=approvedSnap.docs.reduce((sum,doc)=>sum+(doc.data().approved||0),0);if(commitments+count>raffle.spots_total)return fail('Not enough unallocated spots remain.');
-      let code=randomCode(),expiry=Date.now()+86400000,codeHash=await hash(`${r.id}.${code}.${env.SESSION_SECRET}`),token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({approved:count,status:'approved',code_hash:codeHash,code_expires:expiry,failed_attempts:0,board_token_hash:await hash(token)});r.approved=count;let delivery=await deliverCode(env,r,code,token,url.origin,raffle);return json({ok:true,delivery,code:delivery==='manual'?code:undefined,boardToken:delivery==='manual'?token:undefined})
+      let token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({approved:count,status:'approved',board_token_hash:await hash(token),board_token_enc:await sealToken(env,token)});r.approved=count;let delivery=await deliverLink(env,r,token,url.origin);return json({ok:true,delivery,boardToken:delivery==='manual'?token:undefined})
     }
     if(method==='POST'&&route==='/api/admin/resend'){
-      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('Only approved requests can receive a code.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='approved')return fail('Only approved requests can receive a code.');let code=randomCode(),expiry=Date.now()+86400000,token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({code_hash:await hash(`${r.id}.${code}.${env.SESSION_SECRET}`),code_expires:expiry,failed_attempts:0,board_token_hash:await hash(token)});let delivery=await deliverCode(env,r,code,token,url.origin,raffle);return json({ok:true,delivery,code:delivery==='manual'?code:undefined,boardToken:delivery==='manual'?token:undefined})
+      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('Only approved requests can receive a code.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='approved')return fail('Only approved requests can receive a code.');let token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({board_token_hash:await hash(token),board_token_enc:await sealToken(env,token)});let delivery=await deliverLink(env,r,token,url.origin);return json({ok:true,delivery,boardToken:delivery==='manual'?token:undefined})
+    }
+    if(method==='POST'&&route==='/api/admin/board-link'){
+      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists||rSnap.data().status!=='approved')return fail('Only approved participants have a board link.');
+      let sealed=rSnap.data().board_token_enc;if(!sealed)return fail('Create a new link for this person first.');
+      let token=await openToken(env,sealed);return json({ok:true,token,url:`${url.origin}/b/${token}`})
     }
     if(method==='POST'&&route==='/api/admin/decline'){
       let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists||rSnap.data().status!=='pending')return fail('Only pending requests can be declined.');await requestsCol.doc(rSnap.id).update({status:'declined'});return json({ok:true})

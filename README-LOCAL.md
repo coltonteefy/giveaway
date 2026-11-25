@@ -60,7 +60,7 @@ The `.env` above uses emulator hosts. Do not put a real production service accou
 ## How the files fit together
 
 - `public/`: participant and organizer pages, CSS, JavaScript, and QR images. Netlify serves this folder as-is.
-- `netlify/functions/api.mjs`: the API for participants and organizers, including access codes, raffle logic, and admin sign-in.
+- `netlify/functions/api.mjs`: the API for participants and organizers, including personal board links, raffle logic, and admin sign-in.
 - `netlify.toml`: maps `/`, `/r/angie`, and `/organizer` to their pages, and sends `/api/*` to the function.
 - `scripts/`: seed scripts for raffles and organizer accounts. They use the Firebase Admin SDK and need `FIREBASE_SERVICE_ACCOUNT`.
 - `.env.example`: the variables the app reads, with comments on where each one comes from.
