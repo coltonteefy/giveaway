@@ -36,13 +36,18 @@ async function getAdminDoc(d,email){let snap=await d.collection('givingboard_adm
 async function allRaffleIds(d){let docs=await d.collection('givingboard_raffles').listDocuments();return docs.map(ref=>ref.id)}
 async function accessibleRaffleIds(d,adminDoc){if(!adminDoc)return [];if(adminDoc.role==='super')return allRaffleIds(d);return Array.isArray(adminDoc.raffleIds)?adminDoc.raffleIds.map(String):[]}
 async function participant(req,env,d,raffleId){let id=await validCookie(cookies(req).entry,'entry',env.SESSION_SECRET);if(!id)return null;let snap=await d.collection('givingboard_raffles').doc(String(raffleId)).collection('givingboard_requests').doc(id).get();return snap.exists?{id:snap.id,...snap.data()}:null}
+// Personal board links: token = "<raffleId>.<requestId>.<48 hex chars>". Only a SHA-256 hash of the
+// whole token is stored on the request, so a database read alone cannot open a board.
+const boardTokenPattern=/^([12])\.([0-9a-f-]{20,64})\.([0-9a-f]{48})$/;
+const newBoardToken=(raffleId,requestId)=>`${raffleId}.${requestId}.${hex(crypto.getRandomValues(new Uint8Array(24)))}`;
+async function boardRef(d,token){let m=boardTokenPattern.exec(token||'');if(!m)return null;let snap=await d.collection('givingboard_raffles').doc(m[1]).collection('givingboard_requests').doc(m[2]).get();if(!snap.exists)return null;let data=snap.data();if(!data.board_token_hash||data.board_token_hash!==await hash(token))return null;return {raffleId:m[1],request:{id:snap.id,...data}}}
 async function body(req){if(!req.headers.get('content-type')?.includes('application/json'))throw Error('Send JSON.');return req.json()}
 const randomId=()=>crypto.randomUUID();
 const randomCode=()=>{let a=new Uint32Array(1);crypto.getRandomValues(a);return String(a[0]%1000000).padStart(6,'0')};
-async function deliverCode(env,r,code,origin,raffle){
+async function deliverCode(env,r,code,token,origin,raffle){
   if(!env.BREVO_API_KEY||!env.BREVO_SENDER_EMAIL)return 'manual';
-  let link=`${origin}${participantPath(raffle)}#${new URLSearchParams({email:r.email,code})}`;
-  try{let res=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'content-type':'application/json','api-key':env.BREVO_API_KEY},body:JSON.stringify({sender:{email:env.BREVO_SENDER_EMAIL,name:'The Giving Board'},to:[{email:r.email,name:r.name}],subject:'Your raffle spots are ready',htmlContent:`<div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;color:#17332f"><div style="background:#103b39;color:#d8f26b;padding:24px;font-weight:bold;font-size:20px">♥ The Giving Board</div><div style="padding:30px"><h1>Your spots are ready.</h1><p>Hi ${r.name.replace(/[&<>"']/g,'')}, your payment was approved for <b>${r.approved} raffle spot${r.approved===1?'':'s'}</b>.</p><p><a href="${link.replace(/&/g,'&amp;')}" style="display:inline-block;background:#103b39;color:white;padding:15px 24px;text-decoration:none;border-radius:9px">Choose my numbers</a></p><p>This link works once and expires in 24 hours. If it does not open, visit ${origin}${participantPath(raffle)} and enter your email with backup code <b>${code}</b>.</p></div></div>`})});return res.ok?'sent':'manual'}catch{return 'manual'}
+  let link=`${origin}/b/${token}`;
+  try{let res=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'content-type':'application/json','api-key':env.BREVO_API_KEY},body:JSON.stringify({sender:{email:env.BREVO_SENDER_EMAIL,name:'The Giving Board'},to:[{email:r.email,name:r.name}],subject:'Your raffle spots are ready',htmlContent:`<div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;color:#17332f"><div style="background:#103b39;color:#d8f26b;padding:24px;font-weight:bold;font-size:20px">♥ The Giving Board</div><div style="padding:30px"><h1>Your spots are ready.</h1><p>Hi ${r.name.replace(/[&<>"']/g,'')}, your payment was approved for <b>${r.approved} raffle spot${r.approved===1?'':'s'}</b>.</p><p><a href="${link.replace(/&/g,'&amp;')}" style="display:inline-block;background:#103b39;color:white;padding:15px 24px;text-decoration:none;border-radius:9px">Choose my numbers</a></p><p>This is your personal board link. Keep it private: anyone with it can open your board.</p><p>If it does not open, visit ${origin}${participantPath(raffle)} and enter your email with backup code <b>${code}</b>.</p></div></div>`})});return res.ok?'sent':'manual'}catch{return 'manual'}
 }
 
 export default async (request,context)=>{
@@ -54,8 +59,11 @@ export default async (request,context)=>{
     // "/.netlify/functions/api/config" destination. Support both so direct function calls
     // (used for local testing) and the normal redirected calls both resolve correctly.
     let route=url.pathname.startsWith('/.netlify/functions/api')?'/api'+url.pathname.slice('/.netlify/functions/api'.length)||'/api/':url.pathname;
-    let raffleId=1,d=db(),adminEmail=null,adminDoc=null;
+    let raffleId=1,d=db(),adminEmail=null,adminDoc=null,boardReq=null;
     if(route.startsWith('/api/r/')){if(!route.startsWith('/api/r/angie/'))return fail('Not found.',404);route='/api/'+route.slice('/api/r/angie/'.length);raffleId=2}
+    // Personal board: /api/board/<token>[/me|/claim|/config] reads one request directly from its token, not from a cookie.
+    const boardMatch=route.match(/^\/api\/board\/([^/]+)(?:\/(me|claim|config))?$/);
+    if(boardMatch){let ref=await boardRef(d,decodeURIComponent(boardMatch[1]));if(!ref)return fail('This board link is not valid. Ask the organizer for a new one.',404);raffleId=Number(ref.raffleId);boardReq=ref.request;route='/api/'+(boardMatch[2]||'me')}
     if(route.startsWith('/api/admin/')&&route!=='/api/admin/login'&&route!=='/api/admin/logout'){
       let session=await adminSession(request,env);if(!session)return fail('Organizer sign in required.',401);
       adminEmail=session.email;adminDoc=await getAdminDoc(d,adminEmail);if(!adminDoc)return fail('Organizer sign in required.',401);
@@ -86,10 +94,10 @@ export default async (request,context)=>{
       await requestsCol.doc(r.id).update({code_hash:null,code_expires:null,failed_attempts:0});return json({ok:true},200,{'set-cookie':await newCookie(r.id,'entry',env.SESSION_SECRET,request)})
     }
     if(method==='GET'&&route==='/api/me'){
-      let r=await participant(request,env,d,raffleId);if(!r)return fail('Sign in with your emailed code.',401);let board=raffle.board||{};let mine=Object.keys(board).filter(n=>board[n]===r.id).map(Number);return json({name:r.name,status:r.status,approved:r.approved,requested:r.requested,spots:mine,used:used(raffle),...settings(raffle)})
+      let r=boardReq||await participant(request,env,d,raffleId);if(!r)return fail('Sign in with your emailed code.',401);let board=raffle.board||{};let mine=Object.keys(board).filter(n=>board[n]===r.id).map(Number);return json({name:r.name,status:r.status,approved:r.approved,requested:r.requested,spots:mine,used:used(raffle),...settings(raffle)})
     }
     if(method==='POST'&&route==='/api/claim'){
-      let r=await participant(request,env,d,raffleId);if(!r||r.status!=='approved')return fail('Your entry is not approved.',403);let b=await body(request),numbers=b.numbers;if(!Array.isArray(numbers)||numbers.length!==r.approved||new Set(numbers).size!==numbers.length||numbers.some(n=>!Number.isInteger(n)||n<1||n>raffle.spots_total))return fail(`Choose exactly ${r.approved} valid spots.`);
+      let r=boardReq||await participant(request,env,d,raffleId);if(!r||r.status!=='approved')return fail('Your entry is not approved.',403);let b=await body(request),numbers=b.numbers;if(!Array.isArray(numbers)||numbers.length!==r.approved||new Set(numbers).size!==numbers.length||numbers.some(n=>!Number.isInteger(n)||n<1||n>raffle.spots_total))return fail(`Choose exactly ${r.approved} valid spots.`);
       let outcome=await d.runTransaction(async tx=>{
         let snap=await tx.get(raffleRef),cur=snap.data();if(cur.closed||cur.winner)return {error:'The board is closed.',status:400};let board=cur.board||{};if(Object.values(board).includes(r.id))return {error:'You have already chosen your spots.',status:409};if(numbers.some(n=>board[n]))return {error:'One of those spots was just claimed. Choose again.',status:409};
         for(let n of numbers)board[n]=r.id;tx.update(raffleRef,{board,version:cur.version+1});return {ok:true}
@@ -161,10 +169,10 @@ export default async (request,context)=>{
     if(method==='POST'&&route==='/api/admin/approve'){
       let b=await body(request),count=Number(b.count),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('This request cannot be approved.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='pending'||raffle.closed)return fail('This request cannot be approved.');if(!Number.isInteger(count)||count<1||count>r.requested)return fail('Choose a number within this request.');
       let approvedSnap=await requestsCol.where('status','==','approved').get();let commitments=approvedSnap.docs.reduce((sum,doc)=>sum+(doc.data().approved||0),0);if(commitments+count>raffle.spots_total)return fail('Not enough unallocated spots remain.');
-      let code=randomCode(),expiry=Date.now()+86400000,codeHash=await hash(`${r.id}.${code}.${env.SESSION_SECRET}`);await requestsCol.doc(r.id).update({approved:count,status:'approved',code_hash:codeHash,code_expires:expiry,failed_attempts:0});r.approved=count;let delivery=await deliverCode(env,r,code,url.origin,raffle);return json({ok:true,delivery,code:delivery==='manual'?code:undefined})
+      let code=randomCode(),expiry=Date.now()+86400000,codeHash=await hash(`${r.id}.${code}.${env.SESSION_SECRET}`),token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({approved:count,status:'approved',code_hash:codeHash,code_expires:expiry,failed_attempts:0,board_token_hash:await hash(token)});r.approved=count;let delivery=await deliverCode(env,r,code,token,url.origin,raffle);return json({ok:true,delivery,code:delivery==='manual'?code:undefined,boardToken:delivery==='manual'?token:undefined})
     }
     if(method==='POST'&&route==='/api/admin/resend'){
-      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('Only approved requests can receive a code.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='approved')return fail('Only approved requests can receive a code.');let code=randomCode(),expiry=Date.now()+86400000;await requestsCol.doc(r.id).update({code_hash:await hash(`${r.id}.${code}.${env.SESSION_SECRET}`),code_expires:expiry,failed_attempts:0});let delivery=await deliverCode(env,r,code,url.origin,raffle);return json({ok:true,delivery,code:delivery==='manual'?code:undefined})
+      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('Only approved requests can receive a code.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='approved')return fail('Only approved requests can receive a code.');let code=randomCode(),expiry=Date.now()+86400000,token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({code_hash:await hash(`${r.id}.${code}.${env.SESSION_SECRET}`),code_expires:expiry,failed_attempts:0,board_token_hash:await hash(token)});let delivery=await deliverCode(env,r,code,token,url.origin,raffle);return json({ok:true,delivery,code:delivery==='manual'?code:undefined,boardToken:delivery==='manual'?token:undefined})
     }
     if(method==='POST'&&route==='/api/admin/decline'){
       let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists||rSnap.data().status!=='pending')return fail('Only pending requests can be declined.');await requestsCol.doc(rSnap.id).update({status:'declined'});return json({ok:true})

@@ -17,6 +17,11 @@
   status = 200
 
 [[redirects]]
+  from = "/b/*"
+  to = "/user.html"
+  status = 200
+
+[[redirects]]
   from = "/organizer"
   to = "/organizer.html"
   status = 200
