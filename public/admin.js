@@ -20,7 +20,19 @@ for(let id of ['settingsDialog','boardDialog','participantsDialog','shareDialog'
 const openMenus=()=>document.querySelectorAll('details.admin-more[open]');
 document.addEventListener('pointerdown',e=>openMenus().forEach(d=>{if(!d.contains(e.target))d.open=false}));
 document.addEventListener('focusin',e=>openMenus().forEach(d=>{if(!d.contains(e.target))d.open=false}));
-document.addEventListener('keydown',e=>{if(e.key==='Escape')openMenus().forEach(d=>d.open=false)});
+document.addEventListener('keydown',e=>{
+const menu=document.querySelector('details.admin-more');if(!menu)return;
+const summary=menu.querySelector('summary'),items=()=>[...menu.querySelectorAll('.more-menu-items button')].filter(b=>!b.hidden&&!b.disabled);
+if(e.key==='Escape'&&menu.open){menu.open=false;summary.focus();return}
+const onSummary=document.activeElement===summary,inMenu=menu.contains(document.activeElement)&&document.activeElement!==summary;
+if(!(e.key==='ArrowDown'||e.key==='ArrowUp')||!(onSummary||inMenu))return;
+if(onSummary&&!menu.open){if(e.key!=='ArrowDown')return;menu.open=true}
+e.preventDefault();
+const list=items();if(!list.length)return;
+let i=list.indexOf(document.activeElement);
+i=e.key==='ArrowDown'?(i+1)%list.length:(i<=0?list.length-1:i-1);
+list[i].focus();
+});
 document.addEventListener('click',e=>{if(e.target.closest('.more-menu-items button'))openMenus().forEach(d=>d.open=false)});
 async function load(){try{state=await api('/api/admin/state')}catch{$('loginPanel').hidden=false;$('dashboard').hidden=true;$('topActions').hidden=true;$('pendingTray').hidden=true;return}$('loginPanel').hidden=true;$('dashboard').hidden=false;await loadAdminMeta();render();if(!pollTimer)pollTimer=setInterval(refresh,1500)}
 let adminMeta=null;

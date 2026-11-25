@@ -12,7 +12,7 @@ Requirements: Node.js 20 or newer, and Java 21 or newer (the Firebase emulators 
    npm install
    ```
 
-2. Start the Firebase emulators for Auth and Firestore. Run this from a folder outside the project, with a `firebase.json` that enables `auth` on port 9099 and `firestore` on port 8080:
+2. Start the Firebase emulators for Auth and Firestore from the project folder. `firebase.json` already sets the ports. The API uses the Admin SDK, which ignores `firestore.rules`. Requires Java 21 or newer:
 
    ```bash
    firebase emulators:start --only auth,firestore --project demo-givingboard
