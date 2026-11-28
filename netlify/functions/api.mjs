@@ -83,7 +83,7 @@ export default async (request,context)=>{
       // Do not limit before filtering: earlier declined requests may precede an active one.
       let existing=await requestsCol.where('email','==',email).get();if(existing.docs.some(doc=>doc.data().status!=='declined'))return fail('This email already has an entry. Contact the organizer if you need help.',409);
       await requestsCol.doc(randomId()).set({name,email,method:payment,tag,requested,amount:requested*raffle.price,approved:0,status:'pending',code_hash:null,code_expires:null,failed_attempts:0,created_at:new Date().toISOString()});
-      return json({ok:true,status:'pending'},201)
+      await raffleRef.update({changed:Date.now()});return json({ok:true,status:'pending'},201)
     }
     if(method==='GET'&&route==='/api/me'){
       let r=boardReq;if(!r)return fail('Sign in with your emailed code.',401);let board=raffle.board||{};let mine=Object.keys(board).filter(n=>board[n]===r.id).map(Number);return json({name:r.name,status:r.status,approved:r.approved,requested:r.requested,spots:mine,used:used(raffle),...settings(raffle)})
@@ -160,10 +160,10 @@ export default async (request,context)=>{
     if(method==='POST'&&route==='/api/admin/approve'){
       let b=await body(request),count=Number(b.count),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('This request cannot be approved.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='pending'||raffle.closed)return fail('This request cannot be approved.');if(!Number.isInteger(count)||count<1||count>r.requested)return fail('Choose a number within this request.');
       let approvedSnap=await requestsCol.where('status','==','approved').get();let commitments=approvedSnap.docs.reduce((sum,doc)=>sum+(doc.data().approved||0),0);if(commitments+count>raffle.spots_total)return fail('Not enough unallocated spots remain.');
-      let token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({approved:count,status:'approved',board_token_hash:await hash(token),board_token_enc:await sealToken(env,token)});r.approved=count;let delivery=await deliverLink(env,r,token,url.origin);return json({ok:true,delivery,boardToken:delivery==='manual'?token:undefined})
+      let token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({approved:count,status:'approved',board_token_hash:await hash(token),board_token_enc:await sealToken(env,token)});r.approved=count;await raffleRef.update({changed:Date.now()});let delivery=await deliverLink(env,r,token,url.origin);return json({ok:true,delivery,boardToken:delivery==='manual'?token:undefined})
     }
     if(method==='POST'&&route==='/api/admin/resend'){
-      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('Only approved requests can receive a code.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='approved')return fail('Only approved requests can receive a code.');let token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({board_token_hash:await hash(token),board_token_enc:await sealToken(env,token)});let delivery=await deliverLink(env,r,token,url.origin);return json({ok:true,delivery,boardToken:delivery==='manual'?token:undefined})
+      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists)return fail('Only approved requests can receive a code.');let r={id:rSnap.id,...rSnap.data()};if(r.status!=='approved')return fail('Only approved requests can receive a code.');let token=newBoardToken(raffleId,r.id);await requestsCol.doc(r.id).update({board_token_hash:await hash(token),board_token_enc:await sealToken(env,token)});await raffleRef.update({changed:Date.now()});let delivery=await deliverLink(env,r,token,url.origin);return json({ok:true,delivery,boardToken:delivery==='manual'?token:undefined})
     }
     if(method==='POST'&&route==='/api/admin/board-link'){
       let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists||rSnap.data().status!=='approved')return fail('Only approved participants have a board link.');
@@ -171,7 +171,7 @@ export default async (request,context)=>{
       let token=await openToken(env,sealed);return json({ok:true,token,url:`${url.origin}/b/${token}`})
     }
     if(method==='POST'&&route==='/api/admin/decline'){
-      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists||rSnap.data().status!=='pending')return fail('Only pending requests can be declined.');await requestsCol.doc(rSnap.id).update({status:'declined'});return json({ok:true})
+      let b=await body(request),rSnap=await requestsCol.doc(clean(b.id,50)).get();if(!rSnap.exists||rSnap.data().status!=='pending')return fail('Only pending requests can be declined.');await requestsCol.doc(rSnap.id).update({status:'declined'});await raffleRef.update({changed:Date.now()});return json({ok:true})
     }
     if(method==='POST'&&route==='/api/admin/close'){
       if(raffle.winner||raffle.pending_winner)return fail('The draw has started or a winner was selected.');await raffleRef.update({closed:raffle.closed?0:1,version:raffle.version+1});return json({ok:true})
